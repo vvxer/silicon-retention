@@ -9,6 +9,8 @@
 
 > 这是一个研究性质的初版，所有评测都基于合成数据。效果、局限和实验数据见 [docs/原理与实验.md](docs/原理与实验.md)。欢迎实际用起来，并告诉我们结果。
 
+**在用 DeepSeek Harness（DSH）？** 记忆部分已经做成了 DSH 插件，不需要 Python 和显卡，一条命令就能装好：[dsh-silicon](https://github.com/vvxer/dsh-silicon)。两边的数据格式相同，可以共用。
+
 ## 它是怎么工作的
 
 ```
