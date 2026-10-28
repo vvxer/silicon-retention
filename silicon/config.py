@@ -24,6 +24,7 @@ class Config:
     history_chars: int = 6000                       # 本次会话最多带多少字的历史给 DeepSeek；更早的部分靠检索取回
     max_reply_tokens: int = 800
     nightly_at: str = "03:30"                       # 聊天服务开着时每天几点自动夜间巩固；"" = 不自动（自己定时跑 silicon.nightly）
+    emotion_weighting: bool = False                 # 夜间巩固权重时按情绪加权（情绪强的时刻多学）；默认每条发言机会均等，小细节和大事一样学
     host: str = "127.0.0.1"
     port: int = 8700
     lora_port: int = 8701                           # 本地权重服务（给 DSH 插件用，silicon.lora_server）的端口

@@ -8,13 +8,13 @@ python -m silicon.nightly [--include-today] [--skeleton-only | --weights-only]  
        一周聊天超过 8000 字的，先逐天摘要（存 data\memory\day_notes.json），再用摘要写这一行
      已经过完的月、年各写一行 → data\memory\rollup.json（概况太长时用来替换最早的周，见 memory.py）
      相处习惯卡：新日子按周、每段 ≤20000 字分段喂给 DeepSeek 增量更新，最多 12 条、≤1000 字 → data\memory\habits.json
-  2. 情绪标记（只在巩固权重时做）：DeepSeek 读每天的聊天，标出用户情绪明显（1）、很强（2）的一问一答
+  2. 情绪标记（可选，config 里 emotion_weighting 打开，默认关；只在巩固权重时做）：DeepSeek 读每天的聊天，标出用户情绪明显（1）、很强（2）的一问一答
      → data\memory\emotion.json；一晚最多补 60 天，从近到远，没标到的按平常算。
      像人脑里杏仁核给经历打的标记：情绪强的经历在睡眠里优先重放，记得更牢
   3. 训练数据（见 docs\原理与实验.md；进度记在 last_consolidated）：
        新日子里她的每条发言（上下文 = 当天之前的对话，用户消息带 [星期X HH:MM]），一晚最多 600 条  交叉熵
-         超了按情绪加权抽（平常 1、明显 2、很强 4）；情绪很强的当晚多学一遍
-       旧日子样本回放一半（上限 300，同样按情绪加权抽）                            交叉熵，防遗忘
+         超了均匀抽；开了情绪加权则按情绪抽（平常 1、明显 2、很强 4），情绪很强的当晚多学一遍
+       旧日子样本回放一半（上限 300，抽法同上）                            交叉熵，防遗忘
        人格回放 150 条（persona_replay.jsonl）                                      KL，防基础人格漂移
        篇幅锚 60 条（人格卡下 200 字以上的回答）                                    交叉熵，防"越学越短"
   4. 从当前 LoRA 接着训练 → data\adapters\YYYY-MM-DD\，更新 state.json；保留最近 7 个，出问题可以改 state.json 回滚
@@ -152,8 +152,8 @@ def build_rows(cfg, store: Store, new_days: list, old_days: list, tags: dict, rn
         rows += [{"kind": "sft", "messages": [{"role": "user", "content": r["prompt"]}], "response": r["response"]}
                  for r in rng.sample(long, min(60, len(long)))]
     rng.shuffle(rows)
-    print(f"样本：新 {len(new)}（情绪很强的 {len(strong)} 条多学一遍），回放 {len(replay)}（带情绪的 {sum(lv > 0 for _, lv in replay)} 条），"
-          f"合计 {len(rows)}", flush=True)
+    emo = f"；情绪很强的 {len(strong)} 条多学一遍，回放里带情绪的 {sum(lv > 0 for _, lv in replay)} 条" if tags else ""
+    print(f"样本：新 {len(new)}，回放 {len(replay)}，合计 {len(rows)}{emo}", flush=True)
     return rows
 
 
@@ -298,7 +298,7 @@ def main():
     print("巩固：", new_days[0], "~", new_days[-1], f"共 {len(new_days)} 天", flush=True)
 
     old_days = [d for d in store.days() if d <= done_until]
-    tags = emotion_tags(cfg, store, old_days + new_days, client, today)
+    tags = emotion_tags(cfg, store, old_days + new_days, client, today) if cfg.emotion_weighting else {}
     rows = build_rows(cfg, store, new_days, old_days, tags, random.Random(today))
 
     from .train import load_model, train
