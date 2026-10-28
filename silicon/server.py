@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-r"""本地聊天服务（只用标准库）：python -m silicon.server [--no-lora] [--port 8700]，浏览器打开 http://127.0.0.1:8700
+r"""本地聊天服务（只用标准库）：python -m silicon.server [--lora | --no-lora] [--port 8700]，浏览器打开 http://127.0.0.1:8700
+默认纯 DeepSeek + 记忆层；--lora（或 data\config.json 里 "use_lora": true）开本地人格权重，要显卡、先运行 silicon.bake。
 
 POST /api/chat  {"message": "...", "session": "会话 id", "speed": "fast|medium|strong（可省）"}  → NDJSON 流：
     {"type": "delta", "text": "..."}   确认过的文字（不会再改），边生成边显示
@@ -121,15 +122,17 @@ def nightly_loop(at: str, lora: bool):
 def main():
     global COMP
     ap = argparse.ArgumentParser(description="硅基保留：本地聊天服务")
-    ap.add_argument("--no-lora", action="store_true", help="不用本地 LoRA，只用 DeepSeek（对比或没显卡时用）")
+    ap.add_argument("--lora", action="store_true", help="开本地人格权重（要显卡，先运行 python -m silicon.bake）")
+    ap.add_argument("--no-lora", action="store_true", help="不开本地人格权重，覆盖 data/config.json 里的 use_lora")
     ap.add_argument("--port", type=int)
     a = ap.parse_args()
     cfg = config.load()
-    COMP = Companion(cfg, use_lora=not a.no_lora)
+    use_lora = (a.lora or cfg.use_lora) and not a.no_lora
+    COMP = Companion(cfg, use_lora=use_lora)
     port = a.port or cfg.port
     print(f"LoRA：{COMP.adapter or '未启用'}；记忆 {len(COMP.store.days())} 天。打开 http://{cfg.host}:{port}", flush=True)
     if cfg.nightly_at:
-        threading.Thread(target=nightly_loop, args=(cfg.nightly_at, not a.no_lora), daemon=True).start()
+        threading.Thread(target=nightly_loop, args=(cfg.nightly_at, use_lora), daemon=True).start()
         print(f"每天 {cfg.nightly_at} 自动夜间整理（data/config.json 里的 nightly_at 改时间，留空关掉）", flush=True)
     ThreadingHTTPServer((cfg.host, port), Handler).serve_forever()
 

@@ -89,20 +89,20 @@ class Companion:
         torch.cuda.empty_cache()
 
     def system_prompt(self, msg: str, now: datetime, hide_from: datetime | None = None) -> str:
+        # 一天之内不变的放前面（人格卡、习惯卡、概况），命中 DeepSeek 的前缀缓存；时间和检索原文每轮都变，放后面
         user = self.cfg.user_name
-        head = f"{self.persona}\n\n现在是 {now:%Y-%m-%d} 星期{'一二三四五六日'[now.weekday()]} {now:%H:%M}。"
-        days = self.store.days()
-        if days:
-            first = datetime.strptime(days[0], "%Y-%m-%d").date()
-            head += f"你和{user}的第一条聊天记录是 {first}，到今天是认识的第 {(now.date() - first).days + 1} 天。"
-        head += "\n\n"
         card = self.store.habits()
         card = f"你和{user}的相处习惯（从过去的聊天里整理）：\n{card}\n\n" if card else ""
         skel = self.store.skeleton()
         skel = f"过去的概况（近期按周，更早按月、按年）：\n{skel}\n\n" if skel else ""
+        when = f"现在是 {now:%Y-%m-%d} 星期{'一二三四五六日'[now.weekday()]} {now:%H:%M}。"
+        days = self.store.days()
+        if days:
+            first = datetime.strptime(days[0], "%Y-%m-%d").date()
+            when += f"你和{user}的第一条聊天记录是 {first}，到今天是认识的第 {(now.date() - first).days + 1} 天。"
         snip = self.store.retrieve(msg, now, self.cfg.retrieval_chars, hide_from)
         mem = f"以下是和{user}这句话可能相关的过往聊天记录（原文，按时间排序）：\n{snip}\n\n" if snip else ""
-        return head + card + skel + mem + RULES.format(user=user)
+        return f"{self.persona}\n\n" + card + skel + when + "\n\n" + mem + RULES.format(user=user)
 
     def reply(self, msg: str, history: list, on_text=None, now: datetime | None = None, save: bool = True,
               speed: str | None = None, hide_from: datetime | None = None):

@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent
 @dataclass
 class Config:
     data_dir: str = str(ROOT / "data")
-    local_model: str = "Qwen/Qwen3.5-2B"            # 本地小模型：Hugging Face 名称或本地目录（4GB 显存可试 Qwen/Qwen3.5-0.8B，没实测）
+    use_lora: bool = False                          # 本地人格权重：默认不开（纯 DeepSeek + 记忆层）；开要 8GB 显卡，先运行 silicon.bake
+    local_model: str = "Qwen/Qwen3.5-2B"          # 本地小模型：Hugging Face 名称或本地目录（4GB 显存可试 Qwen/Qwen3.5-0.8B，没实测）
     embed_model: str = "BAAI/bge-base-zh-v1.5"      # 检索用的向量模型（CPU 上跑）
     user_name: str = "老板"                          # 她怎么称呼你；记忆和提示里都用这个名字，要和人格卡一致
     ai_name: str = "小硅"                            # 她的名字，要和人格卡一致
@@ -41,7 +42,8 @@ def load() -> Config:
     for fl in fields(Config):
         v = os.environ.get("SILICON_" + fl.name.upper())
         if v is not None:
-            setattr(cfg, fl.name, type(getattr(cfg, fl.name))(v))
+            t = type(getattr(cfg, fl.name))
+            setattr(cfg, fl.name, v.strip().lower() in ("1", "true", "yes", "on") if t is bool else t(v))
     return cfg
 
 
