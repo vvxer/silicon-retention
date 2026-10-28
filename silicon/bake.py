@@ -37,6 +37,8 @@ def main():
     ap.add_argument("--epochs", type=int, default=2)
     a = ap.parse_args()
     cfg = config.load()
+    if not (cfg.data / "persona.md").exists() and (cfg.data / "memory" / "persona-seen.txt").exists():
+        raise SystemExit(f"这是 DSH 插件的数据目录：先把人格卡写进 {cfg.data / 'persona.md'}（和 DSH 里设定的人设一致），再烘焙")
     persona = persona_text(cfg)
     client = deepseek.Client()
     replay = cfg.data / "persona_replay.jsonl"

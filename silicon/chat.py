@@ -50,18 +50,13 @@ def window(turns: list, max_chars: int):
     return hist, (kept[0]["at"] if kept else None)
 
 
-class Companion:
-    def __init__(self, cfg: config.Config | None = None, use_lora: bool = True):
-        self.cfg = cfg or config.load()
-        config.save_default(self.cfg)
-        fusion.speed_params(self.cfg.speed)                    # 配置写错了尽早报出来
-        self.persona = persona_text(self.cfg)
-        self.store = Store(self.cfg.data, self.cfg.embed_model, self.cfg.user_name, self.cfg.ai_name)
-        self.client = deepseek.Client()
+class LocalModel:
+    """显存里的本地模型 + LoRA（按 state.json 里的 adapter）。夜间巩固要用显存时移出，训练完再加载新的。"""
+
+    def __init__(self, cfg: config.Config):
+        self.cfg = cfg
         self.lock = threading.Lock()          # 一次只生成一条
         self.model = self.tok = self.adapter = None
-        if use_lora:
-            self.load_model()
 
     def load_model(self):
         """按 state.json 里的 adapter 加载本地模型；还没有 adapter 就保持只用 DeepSeek。"""
@@ -87,6 +82,18 @@ class Companion:
         import torch
         gc.collect()
         torch.cuda.empty_cache()
+
+
+class Companion(LocalModel):
+    def __init__(self, cfg: config.Config | None = None, use_lora: bool = True):
+        super().__init__(cfg or config.load())
+        config.save_default(self.cfg)
+        fusion.speed_params(self.cfg.speed)                    # 配置写错了尽早报出来
+        self.persona = persona_text(self.cfg)
+        self.store = Store(self.cfg.data, self.cfg.embed_model, self.cfg.user_name, self.cfg.ai_name)
+        self.client = deepseek.Client()
+        if use_lora:
+            self.load_model()
 
     def system_prompt(self, msg: str, now: datetime, hide_from: datetime | None = None) -> str:
         # 一天之内不变的放前面（人格卡、习惯卡、概况），命中 DeepSeek 的前缀缓存；时间和检索原文每轮都变，放后面

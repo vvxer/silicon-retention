@@ -26,6 +26,7 @@ class Config:
     nightly_at: str = "03:30"                       # 聊天服务开着时每天几点自动夜间巩固；"" = 不自动（自己定时跑 silicon.nightly）
     host: str = "127.0.0.1"
     port: int = 8700
+    lora_port: int = 8701                           # 本地权重服务（给 DSH 插件用，silicon.lora_server）的端口
 
     @property
     def data(self) -> Path:

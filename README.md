@@ -10,7 +10,7 @@
 
 > 这是一个研究性质的初版，所有评测都基于合成数据。效果、局限和实验数据见 [docs/原理与实验.md](docs/原理与实验.md)。欢迎实际用起来，并告诉我们结果。
 
-**在用 DeepSeek Harness（DSH）？** 记忆部分已经做成了 DSH 插件，不需要 Python 和显卡，一条命令就能装好：[dsh-silicon](https://github.com/vvxer/dsh-silicon)。两边的数据格式相同，可以共用。
+**在用 DeepSeek Harness（DSH）？** 已经做成了 DSH 插件：[dsh-silicon](https://github.com/vvxer/dsh-silicon)。默认只用记忆，不需要 Python 和显卡，一条命令就能装好。想开本地权重的话，在本仓库运行 `python -m silicon.lora_server`，插件会把闲聊转过来融合。两边的数据格式相同，可以共用一个目录。
 
 ## 它是怎么工作的
 
@@ -97,6 +97,7 @@ python -m silicon.server --lora   # 或在 data/config.json 里设 "use_lora": t
 | `vram_gb` | 8 | 本地模型最多用多少显存 |
 | `local_model` / `embed_model` | Qwen/Qwen3.5-2B / BAAI/bge-base-zh-v1.5 | 模型名或本地目录 |
 | `nightly_at` | 03:30 | 自动夜间整理的时间，留空关掉 |
+| `lora_port` | 8701 | 给 DSH 插件用的本地权重服务（`python -m silicon.lora_server`）的端口 |
 
 ## 费用
 

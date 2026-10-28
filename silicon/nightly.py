@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 r"""夜间巩固：把还没巩固过的日子写进 LoRA，并更新概况。
 
-python -m silicon.nightly [--include-today] [--skeleton-only]     要显卡（--skeleton-only 只更新记忆，不要显卡）；建议每天夜里定时跑
+python -m silicon.nightly [--include-today] [--skeleton-only | --weights-only]     要显卡（--skeleton-only 只更新记忆，不要显卡）；建议每天夜里定时跑
+--weights-only：只巩固权重、不更新记忆，给 DSH 插件用（插件自己整理记忆），由 silicon.lora_server 每晚调用
   1. 记忆（有没有本地权重都做；进度记在 state.json 的 memory_until）：
      概况：涉及的自然周各用 DeepSeek 写一行（≤60 字）→ data\memory\skeleton.json；
        一周聊天超过 8000 字的，先逐天摘要（存 data\memory\day_notes.json），再用摘要写这一行
@@ -182,6 +183,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--include-today", action="store_true")
     ap.add_argument("--skeleton-only", action="store_true", help="只更新概况和相处习惯卡，不训练（不用本地权重时）")
+    ap.add_argument("--weights-only", action="store_true", help="只巩固权重，不更新记忆（DSH 插件自己整理记忆）")
     ap.add_argument("--epochs", type=int, default=2)
     a = ap.parse_args()
     cfg = config.load()
@@ -191,7 +193,7 @@ def main():
     client = deepseek.Client()
 
     mem_days = [d for d in store.days() if d > st.get("memory_until", "") and (a.include_today or d < today)]
-    if mem_days:
+    if mem_days and not a.weights_only:
         print("更新记忆：", mem_days[0], "~", mem_days[-1], f"共 {len(mem_days)} 天", flush=True)
         update_skeleton(cfg, store, mem_days, client, today)
         update_habits(cfg, store, mem_days, client)
@@ -200,7 +202,7 @@ def main():
     if a.skeleton_only:
         return
     if not st.get("base_adapter"):
-        print("还没有烘焙人格，只更新了记忆；要用本地权重先运行 python -m silicon.bake")
+        print("还没有烘焙人格，" + ("没有可巩固的权重" if a.weights_only else "只更新了记忆") + "；要用本地权重先运行 python -m silicon.bake")
         return
     done_until = st.get("last_consolidated", "")
     new_days = [d for d in store.days() if d > done_until and (a.include_today or d < today)]
@@ -230,6 +232,7 @@ def main():
     tok, model = load_model(cfg.local_model, cfg.vram_gb, st.get("adapter"))
     out = cfg.data / "adapters" / new_days[-1]
     info = train(model, tok, rows, persona_text(cfg), out, epochs=a.epochs)
+    st = read_state(cfg)        # 训练要十几分钟，这期间记忆进度可能被别的进程（DSH 插件）更新过：重读再写
     st.update(adapter=str(out), last_consolidated=new_days[-1])
     write_state(cfg, st)
     keep = sorted(p for p in (cfg.data / "adapters").iterdir() if p.is_dir() and p.name[:2] == "20")[:-7]

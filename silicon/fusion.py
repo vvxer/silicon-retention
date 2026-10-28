@@ -188,8 +188,10 @@ class Fuser:
         r = self.rng.choices(range(len(cands)), weights=(pf - pa).clamp(min=0).tolist())[0]
         return False, cands[r], {"tv": tv}
 
-    def generate(self, user_msg: str, api_system: str | None = None, history: list | None = None, on_text=None):
-        """DeepSeek 看到 api_system + 历史 + 本条消息；本地模型只看历史（截断）+ 本条消息。返回 (回答, 统计)。"""
+    def generate(self, user_msg: str, api_system: str | None = None, history: list | None = None, on_text=None,
+                 api_messages: list | None = None):
+        """DeepSeek 看到 api_system + 历史 + 本条消息（给了 api_messages 就只看它，最后一条应是本条消息）；
+        本地模型只看历史（截断）+ 本条消息。返回 (回答, 统计)。"""
         t0 = time.perf_counter()
         task = is_task(user_msg)
         alpha = self.alpha_task if task else self.alpha_chat
@@ -200,8 +202,8 @@ class Fuser:
             s.recomputes, s.fwd_s = 0, 0.0
         st = {"task": task, "alpha": alpha, "api_tokens": 0, "streams": 0, "rejections": 0, "fused": 0, "lenient": 0,
               "skipped": 0, "sum_tv": 0.0, "first_text_s": None, "ttft_s": 0.0, "wait_s": 0.0, "verify_s": 0.0, "pre_s": 0.0}
-        base = ([{"role": "system", "content": api_system}] if api_system else []) + list(history or []) + \
-               [{"role": "user", "content": user_msg}]
+        base = list(api_messages) if api_messages else \
+            ([{"role": "system", "content": api_system}] if api_system else []) + list(history or []) + [{"role": "user", "content": user_msg}]
         done, sent = b"", 0
 
         def emit():
