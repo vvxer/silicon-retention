@@ -1,0 +1,8 @@
+# torch 请按自己的显卡单独装（CUDA 12.x 对应的版本），这里不锁。测试环境：Python 3.12、torch 2.11 + CUDA 12.8
+transformers>=5.21
+peft>=0.21
+accelerate
+safetensors
+tokenizers
+# Qwen3.5 线性注意力的加速内核（不装也能跑，但本地打分会慢很多）；Windows 还需要 pip install triton-windows
+flash-linear-attention>=0.6

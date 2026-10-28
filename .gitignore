@@ -1,0 +1,9 @@
+# 个人数据：原文日志、LoRA、记忆索引、人格卡、配置都只留在本机
+data/
+data_*/
+*.jsonl
+*.pt
+*.safetensors
+__pycache__/
+.venv/
+.env
