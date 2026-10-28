@@ -8,16 +8,21 @@ python -m silicon.nightly [--include-today] [--skeleton-only | --weights-only]  
        一周聊天超过 8000 字的，先逐天摘要（存 data\memory\day_notes.json），再用摘要写这一行
      已经过完的月、年各写一行 → data\memory\rollup.json（概况太长时用来替换最早的周，见 memory.py）
      相处习惯卡：新日子按周、每段 ≤20000 字分段喂给 DeepSeek 增量更新，最多 12 条、≤1000 字 → data\memory\habits.json
-  2. 训练数据（见 docs\原理与实验.md；进度记在 last_consolidated）：
+  2. 情绪标记（只在巩固权重时做）：DeepSeek 读每天的聊天，标出用户情绪明显（1）、很强（2）的一问一答
+     → data\memory\emotion.json；一晚最多补 60 天，从近到远，没标到的按平常算。
+     像人脑里杏仁核给经历打的标记：情绪强的经历在睡眠里优先重放，记得更牢
+  3. 训练数据（见 docs\原理与实验.md；进度记在 last_consolidated）：
        新日子里她的每条发言（上下文 = 当天之前的对话，用户消息带 [星期X HH:MM]），一晚最多 600 条  交叉熵
-       旧日子样本回放一半（上限 300）                                              交叉熵，防遗忘
+         超了按情绪加权抽（平常 1、明显 2、很强 4）；情绪很强的当晚多学一遍
+       旧日子样本回放一半（上限 300，同样按情绪加权抽）                            交叉熵，防遗忘
        人格回放 150 条（persona_replay.jsonl）                                      KL，防基础人格漂移
        篇幅锚 60 条（人格卡下 200 字以上的回答）                                    交叉熵，防"越学越短"
-  3. 从当前 LoRA 接着训练 → data\adapters\YYYY-MM-DD\，更新 state.json；保留最近 7 个，出问题可以改 state.json 回滚
+  4. 从当前 LoRA 接着训练 → data\adapters\YYYY-MM-DD\，更新 state.json；保留最近 7 个，出问题可以改 state.json 回滚
 """
 import argparse
 import json
 import random
+import re
 import shutil
 from datetime import date, datetime, timedelta
 
@@ -30,7 +35,17 @@ DAY_ASK = "下面是用户（{user}）和 AI 伙伴{ai}在 {day} 的聊天记录
 DAY_MERGE_ASK = "下面是{user}在 {day} 一天里各段聊天的摘要。合并成两三句话（不超过 120 字），保留关键人名和事件。只输出这几句话。\n\n{lines}"
 SKELETON_PIECE = 8000      # 一次喂给 DeepSeek 写概况的原文上限（字）；聊得多的人一周有几十万字，只取末尾会丢掉前几天
 HABITS_PIECE = 20000       # 习惯卡每次喂的原文上限，超了分段、逐段更新卡
-NEW_CAP = 600              # 一晚最多学多少条新发言（均匀抽），训练时间不随聊天量无限增长
+NEW_CAP = 600              # 一晚最多学多少条新发言，训练时间不随聊天量无限增长
+EMOTION_ASK = """下面是用户（{user}）和 AI 伙伴{ai}在 {day} 的聊天{part}，每一问一答前面有编号。按{user}这句话里的情绪给每一问一答定强度：
+2 = 情绪很强：吵架、崩溃、大哭、狂喜，或者人生大事（分手、表白、生病、亲人离世、升职、被裁）
+1 = 情绪明显：直接说出难过、委屈、生气、害怕、孤独、感动、特别开心，或者明显的压力和焦虑
+0 = 其他：日常的累、烦、忙和随口抱怨，平常的闲聊、问问题、让{ai}干活
+
+只输出强度是 1 和 2 的，每处一行："编号 强度"。一处都没有就输出"无"。
+
+{log}"""
+EMOTION_WEIGHT = (1, 2, 4) # 情绪强度 0/1/2 的样本被抽中的相对机会
+TAG_CAP = 60               # 一晚最多给多少天打情绪标记；第一次开或重新烘焙后，旧日子分几晚补完
 MONTH_ASK = "下面是{user}某个月每周的概况。用一句话（不超过 60 字）概括这个月，只保留最重要的人和事。只输出这一句话。\n\n{lines}"
 YEAR_ASK = "下面是{user}某一年每个月的概况。用一两句话（不超过 100 字）概括这一年，只保留最重要的几件事和关键人物。只输出这段话。\n\n{lines}"
 # 相处习惯卡（阶段 5：检索给够预算 + 这张卡，纯 DeepSeek 就追平了"读完整日记"）
@@ -69,6 +84,77 @@ def day_samples(store: Store, day: str) -> list:
             msgs.append({"role": role, "content": text})
     return [{"kind": "sft", "messages": msgs[:j], "response": m["content"]}
             for j, m in enumerate(msgs) if m["role"] == "assistant" and j > 0]
+
+
+def cut(text: str, n: int) -> str:
+    text = text.replace("\n", " ")
+    return text if len(text) <= n else text[:n] + "…"
+
+
+def tag_day(cfg, day: str, samples: list, client) -> dict:
+    """一天里情绪明显的一问一答：{样本序号: 强度}。用户的话截到 300 字，她的回答截到 100 字（看情绪主要看用户说了什么）。"""
+    lines = [f"[{k}] {cfg.user_name}：{cut(s['messages'][-1]['content'], 300)}　{cfg.ai_name}：{cut(s['response'], 100)}"
+             for k, s in enumerate(samples)]
+    ps = pieces([(day, lines)], SKELETON_PIECE)
+    tags = {}
+    for i, p in enumerate(ps):
+        out = ask(client, EMOTION_ASK.format(user=cfg.user_name, ai=cfg.ai_name, day=day,
+                                             part=f"（第 {i + 1}/{len(ps)} 段）" if len(ps) > 1 else "", log=p))
+        for k, lv in re.findall(r"^\D*(\d+)\D+([12])(?!\d)", out, re.M):
+            if int(k) < len(samples):
+                tags[int(k)] = max(tags.get(int(k), 0), int(lv))
+    return tags
+
+
+def emotion_tags(cfg, store: Store, days: list, client, today: str) -> dict:
+    """{日期: {样本序号: 强度}}，过完的日子存进 emotion.json。这一晚最多补 TAG_CAP 天，从近到远；出错就停，没标的按平常算。"""
+    f = cfg.data / "memory" / "emotion.json"
+    saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    tags = {d: {int(k): v for k, v in t.items()} for d, t in saved.items()}
+    todo = [d for d in reversed(days) if d not in tags][:TAG_CAP]
+    for d in todo:
+        samples = day_samples(store, d)
+        try:
+            tags[d] = tag_day(cfg, d, samples, client) if samples else {}
+        except (RuntimeError, OSError) as e:
+            print("情绪标记出错，今晚没标到的日子按平常算：", e, flush=True)
+            break
+        if d < today:
+            saved[d] = {str(k): v for k, v in sorted(tags[d].items())}
+    if todo:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(dict(sorted(saved.items())), ensure_ascii=False), encoding="utf-8")
+        n = [lv for d in todo for lv in tags.get(d, {}).values()]
+        print(f"情绪标记：{len(todo)} 天，明显 {n.count(1)} 处，很强 {n.count(2)} 处", flush=True)
+    return tags
+
+
+def wsample(rng, items: list, k: int) -> list:
+    """[(样本, 情绪强度)] 按 EMOTION_WEIGHT 不放回地抽 k 个（Efraimidis–Spirakis），不够 k 个就全要。"""
+    if k >= len(items):
+        return list(items)
+    keys = [rng.random() ** (1 / EMOTION_WEIGHT[lv]) for _, lv in items]
+    return [items[i] for i in sorted(range(len(items)), key=keys.__getitem__, reverse=True)[:k]]
+
+
+def build_rows(cfg, store: Store, new_days: list, old_days: list, tags: dict, rng) -> list:
+    leveled = lambda days: [(s, tags.get(d, {}).get(k, 0)) for d in days for k, s in enumerate(day_samples(store, d))]
+    new = wsample(rng, leveled(new_days), NEW_CAP)
+    old = leveled(old_days)
+    replay = wsample(rng, old, min(300, len(old) // 2))
+    strong = [s for s, lv in new if lv == 2]
+    rows = [s for s, _ in new] + strong + [s for s, _ in replay]
+    pfile = cfg.data / "persona_replay.jsonl"
+    if pfile.exists():
+        pr = [json.loads(l) for l in open(pfile, encoding="utf-8")]
+        rows += [{"kind": "kl", **r} for r in rng.sample(pr, min(150, len(pr)))]
+        long = [r for r in pr if r.get("persona") and len(r["response"]) >= 200]
+        rows += [{"kind": "sft", "messages": [{"role": "user", "content": r["prompt"]}], "response": r["response"]}
+                 for r in rng.sample(long, min(60, len(long)))]
+    rng.shuffle(rows)
+    print(f"样本：新 {len(new)}（情绪很强的 {len(strong)} 条多学一遍），回放 {len(replay)}（带情绪的 {sum(lv > 0 for _, lv in replay)} 条），"
+          f"合计 {len(rows)}", flush=True)
+    return rows
 
 
 def day_lines(cfg, store: Store, day: str) -> list:
@@ -211,22 +297,9 @@ def main():
         return
     print("巩固：", new_days[0], "~", new_days[-1], f"共 {len(new_days)} 天", flush=True)
 
-    rng = random.Random(today)
-    new = [s for d in new_days for s in day_samples(store, d)]
-    if len(new) > NEW_CAP:
-        new = rng.sample(new, NEW_CAP)
-    old = [s for d in store.days() if d <= done_until for s in day_samples(store, d)]
-    replay = rng.sample(old, min(300, len(old) // 2))
-    rows = new + replay
-    pfile = cfg.data / "persona_replay.jsonl"
-    if pfile.exists():
-        pr = [json.loads(l) for l in open(pfile, encoding="utf-8")]
-        rows += [{"kind": "kl", **r} for r in rng.sample(pr, min(150, len(pr)))]
-        long = [r for r in pr if r.get("persona") and len(r["response"]) >= 200]
-        rows += [{"kind": "sft", "messages": [{"role": "user", "content": r["prompt"]}], "response": r["response"]}
-                 for r in rng.sample(long, min(60, len(long)))]
-    rng.shuffle(rows)
-    print(f"样本：新 {len(new)}，回放 {len(replay)}，合计 {len(rows)}", flush=True)
+    old_days = [d for d in store.days() if d <= done_until]
+    tags = emotion_tags(cfg, store, old_days + new_days, client, today)
+    rows = build_rows(cfg, store, new_days, old_days, tags, random.Random(today))
 
     from .train import load_model, train
     tok, model = load_model(cfg.local_model, cfg.vram_gb, st.get("adapter"))
