@@ -38,8 +38,11 @@ def parse_when(text: str, now: date):
         return None
     m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
     if m:
-        d = date(int(m[1]), int(m[2]), int(m[3]))
-        return (d, d)
+        try:
+            d = date(int(m[1]), int(m[2]), int(m[3]))
+            return (d, d)
+        except ValueError:          # 2026-02-30 这类不存在的日期：当作没写，接着看别的说法
+            pass
     m = re.search(r"(\d{1,2}|[一二三四五六七八九十]+)月(\d{1,2}|[一二三四五六七八九十]+)[日号]", text)
     if m:
         try:
