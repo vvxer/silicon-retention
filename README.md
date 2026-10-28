@@ -135,4 +135,6 @@ python -m silicon.server --lora   # 或在 data/config.json 里设 "use_lora": t
 
 ## 许可
 
-代码：MIT。模型各自遵循自己的许可证：Qwen3.5 和 bge 都是 Apache-2.0；DeepSeek API 遵循其服务条款。
+代码：[PolyForm Noncommercial 1.0.0](LICENSE)：**不可商用**。可以自己用、学习、研究、改着玩，也可以非商业地分享（分享时附上本许可证）；学校、公益组织等非营利机构也可以用。不能用于商业用途，比如做成收费产品或服务、放进公司业务里。想商用请先联系作者。
+
+模型各自遵循自己的许可证：Qwen3.5 和 bge 都是 Apache-2.0；DeepSeek API 遵循其服务条款。
